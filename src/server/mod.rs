@@ -11,11 +11,13 @@ pub struct ScalerImpl;
 #[tonic::async_trait]
 impl Scaler for ScalerImpl {
     async fn assign(&self, _: Request<AssignRequest>) -> TonicResult<AssignReply> {
+        println!("assign");
         Ok(Response::new(AssignReply {
             ..Default::default()
         }))
     }
     async fn idle(&self, _: Request<IdleRequest>) -> TonicResult<IdleReply> {
+        println!("idle");
         Ok(Response::new(IdleReply {
             ..Default::default()
         }))
