@@ -12,8 +12,9 @@ RUN rm -rf ./data
 RUN cargo build --release
 
 # Copy the binary from the builder stage.
-COPY /app/target/release/scaler /app/scaler
-RUN chmod +x /app/scaler
+RUN cp ./target/release/scaler ./
+RUN cargo clean
+RUN chmod +x ./scaler
 
 # Copy the startup script.
 COPY run.sh run.sh
