@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: serverless-simulation
+  name: serverless-simulation2
   labels:
     app: serverless-simulation
 spec:
@@ -16,7 +16,7 @@ spec:
       - name: scaler
         #  需要替换为选手实现的scaler镜像地址
         #  registry.cn-beijing.aliyuncs.com/cloudnative-challenge/scaler:java-v1.0为java语言的demo镜像
-        image: registry.cn-beijing.aliyuncs.com/cloudnative-challenge/scaler:v0.7.1
+        image: debian:bookworm-slim
         command: ["./run.sh"]
       - name: serverless-simulator
         image: registry.cn-beijing.aliyuncs.com/cloudnative-challenge/simulator:v1.3.2

@@ -12,6 +12,7 @@ RUN rm -rf ./data
 RUN cargo build --release
 
 # Copy the binary from the builder stage.
+RUN apt-get install -y curl
 RUN cp ./target/release/scaler ./
 RUN cargo clean
 RUN chmod +x ./scaler
