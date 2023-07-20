@@ -18,7 +18,7 @@ message AssignRequest {
 message AssignReply {
   Status status = 1;
   Assignment assigment = 2;
-  optional string error_message = 3;
+  string error_message = 3;
 }
 
 message IdleRequest{
@@ -28,7 +28,7 @@ message IdleRequest{
 
 message IdleReply{
   Status status = 1;
-  optional string error_message = 3;
+  string error_message = 3;
 }
 
 enum Status{
@@ -56,8 +56,8 @@ message Assignment {
 message Result {
   int32 status_code = 1;
   uint64 duration_in_ms = 2;
-  optional bool need_destroy = 3;
-  optional string reason = 4;
+  bool need_destroy = 3;
+  string reason = 4;
 }
 
 
@@ -78,19 +78,19 @@ message CreateSlotRequest{
 
 message CreateSlotReply{
   Status status = 1;
-  optional Slot slot = 2;
-  optional string error_message = 3;
+  Slot slot = 2;
+  string error_message = 3;
 }
 
 message DestroySlotRequest{
   string request_id = 1;
   string id = 2;
-  optional string reason = 3;
+  string reason = 3;
 }
 
 message DestroySlotReply{
   Status status = 1;
-  optional string error_message = 2;
+  string error_message = 2;
 }
 
 message Slot{
@@ -111,7 +111,7 @@ message InitReply{
   Status status = 1;
   uint64 create_time = 2;
   uint64 init_duration_in_ms = 3;
-  optional string error_message = 4;
+  string error_message = 4;
 }
 
 message ResourceConfig{
