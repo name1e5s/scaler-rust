@@ -1,7 +1,7 @@
 # Use a multi-stage build to keep the final image size small.
 # In the first stage, we'll use the official Go image to build the binary.
 # FROM golang:1.17.1 as builder
-FROM registry-internal.cn-shanghai.aliyuncs.com/hai-hsin/rust:0.1.3
+FROM registry.cn-shanghai.aliyuncs.com/hai-hsin/rust:0.1.3
 
 # Set the working directory to /build.
 WORKDIR /app
