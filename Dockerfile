@@ -10,6 +10,8 @@ WORKDIR /build
 COPY . ./
 RUN rm -rf ./data
 RUN cargo build --release
+RUN cp ./target/release/scaler ./
+RUN rm -rf ./target
 
 FROM registry.cn-beijing.aliyuncs.com/cloudnative-challenge/ubuntu:latest
 
@@ -20,7 +22,7 @@ RUN apt-get update && apt-get install -y netcat curl
 WORKDIR /app
 
 # Copy the binary from the builder stage.
-COPY --from=builder /build/target/release/scaler /app/scaler
+COPY --from=builder /build/scaler /app/scaler
 RUN chmod +x /app/scaler
 
 # Copy the source code into the container, excluding the 'data' directory
