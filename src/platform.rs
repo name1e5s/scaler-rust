@@ -7,7 +7,7 @@ use crate::{
 
 use anyhow::{anyhow, bail, Result};
 use std::future::Future;
-use tonic::transport::Channel;
+use tonic::transport::{Channel, Endpoint};
 use uuid::Uuid;
 
 pub struct Platform {
@@ -17,7 +17,8 @@ pub struct Platform {
 impl Platform {
     pub async fn new() -> Result<Platform> {
         let config = global_config();
-        let inner = PlatformClient::connect(config.client_addr).await?;
+        let channel = Endpoint::try_from(config.client_addr)?.connect_lazy();
+        let inner = PlatformClient::new(channel);
         Ok(Platform { inner })
     }
 
