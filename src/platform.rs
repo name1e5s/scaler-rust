@@ -15,7 +15,7 @@ pub struct Platform {
 }
 
 impl Platform {
-    pub async fn new() -> Result<Platform> {
+    pub fn new() -> Result<Platform> {
         let config = global_config();
         let channel = Endpoint::try_from(config.client_addr)?.connect_lazy();
         let inner = PlatformClient::new(channel);
@@ -47,7 +47,11 @@ impl Platform {
         }
     }
 
-    pub async fn create_slot(&self, config: model::ResourceConfig, meta: model::Meta) -> Result<model::Slot> {
+    pub async fn create_slot(
+        &self,
+        config: model::ResourceConfig,
+        meta: model::Meta,
+    ) -> Result<model::Slot> {
         let instance_id = Uuid::new_v4().to_string();
         let resp = self
             .run_with_retry(
@@ -114,12 +118,7 @@ impl Platform {
         Ok(())
     }
 
-    async fn init(
-        &self,
-        instance_id: &str,
-        id: &str,
-        meta: model::Meta,
-    ) -> Result<rpc::InitReply> {
+    async fn init(&self, instance_id: &str, id: &str, meta: model::Meta) -> Result<rpc::InitReply> {
         let resp = self
             .run_with_retry(
                 |platform, req| async {
@@ -142,11 +141,7 @@ impl Platform {
             .await?
             .into_inner();
         if resp.status() != rpc::Status::Ok {
-            bail!(
-                "init failed, resp: {} {}",
-                resp.status,
-                resp.error_message
-            );
+            bail!("init failed, resp: {} {}", resp.status, resp.error_message);
         }
         Ok(resp)
     }

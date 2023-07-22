@@ -1,4 +1,3 @@
-
 pub struct Config {
     pub client_addr: String,
 }

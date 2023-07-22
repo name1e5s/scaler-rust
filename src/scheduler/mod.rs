@@ -1,7 +1,8 @@
-use crate::model;
-use crate::platform::Platform;
-use anyhow::{Result, anyhow};
+use crate::{model, platform::Platform};
+use anyhow::{anyhow, Result};
 use dashmap::DashMap;
+
+pub mod cell;
 
 #[tonic::async_trait]
 pub trait Scheduler {
@@ -25,9 +26,9 @@ pub struct DirectScheduler {
 }
 
 impl DirectScheduler {
-    pub async fn new() -> Result<DirectScheduler> {
+    pub fn new() -> Result<DirectScheduler> {
         Ok(DirectScheduler {
-            client: Platform::new().await?,
+            client: Platform::new()?,
             map: DashMap::new(),
         })
     }
@@ -43,9 +44,15 @@ impl Scheduler for DirectScheduler {
     ) -> Result<model::Assignment> {
         let meta = meta.ok_or_else(|| anyhow!("meta is None"))?;
         let meta_key = meta.key.clone();
-        let slot = self.client.create_slot(model::ResourceConfig {
-            memory_in_megabytes: meta.memory_in_mb,
-        }, meta).await?;
+        let slot = self
+            .client
+            .create_slot(
+                model::ResourceConfig {
+                    memory_in_megabytes: meta.memory_in_mb,
+                },
+                meta,
+            )
+            .await?;
         self.map.insert(request_id.clone(), slot.clone());
         Ok(model::Assignment {
             request_id,
@@ -60,7 +67,9 @@ impl Scheduler for DirectScheduler {
     ) -> Result<()> {
         let assignment = assignment.ok_or_else(|| anyhow!("assignment is None"))?;
         let slot = self.map.get(&assignment.request_id).unwrap().clone();
-        self.client.destroy_slot(&slot.instance_id, &slot.id).await?;
+        self.client
+            .destroy_slot(&slot.instance_id, &slot.id)
+            .await?;
         Ok(())
     }
 }

@@ -1,13 +1,18 @@
 use anyhow::Result;
-use scaler::rpc::scaler_server::ScalerServer;
-use scaler::server::ScalerImpl;
-use scaler::scheduler::DirectScheduler;
+use env_logger::{Builder, Env};
+use scaler::{
+    cell::NaiveCell, platform::Platform, rpc::scaler_server::ScalerServer,
+    scheduler::cell::CellScheduler, server::ScalerImpl,
+};
 use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    Builder::from_env(Env::default().default_filter_or("debug")).init();
+
     let addr = "127.0.0.1:9001".parse()?;
-    let scheduler = DirectScheduler::new().await?;
+    let platform = Platform::new()?;
+    let scheduler: CellScheduler<NaiveCell> = CellScheduler::new(platform);
     let server = ScalerImpl::new(scheduler);
 
     Server::builder()

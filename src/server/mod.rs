@@ -1,6 +1,7 @@
-use crate::rpc::scaler_server::Scaler;
-use crate::rpc::{self, AssignReply, AssignRequest, IdleReply, IdleRequest};
-use crate::scheduler::Scheduler;
+use crate::{
+    rpc::{self, scaler_server::Scaler, AssignReply, AssignRequest, IdleReply, IdleRequest},
+    scheduler::Scheduler,
+};
 use tonic::{Request, Response, Status};
 
 pub type TonicResult<T> = std::result::Result<Response<T>, Status>;
