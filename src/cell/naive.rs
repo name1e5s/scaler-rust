@@ -22,7 +22,7 @@ use std::{
 };
 use tokio::{sync::Notify, time::timeout};
 
-const OUTDATED_SLOT_GC_SEC: u64 = 300;
+const OUTDATED_SLOT_GC_SEC: u64 = 30;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 const OUTDATED_SLOT_LEN: usize = 5;
 
