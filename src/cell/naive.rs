@@ -6,6 +6,7 @@ use crate::{
     util,
 };
 use anyhow::{anyhow, Result};
+use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use futures::{
     future::{select, Either},
@@ -18,11 +19,12 @@ use std::{
         atomic::{AtomicI64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
-use tokio::{sync::Notify, time::timeout};
+use tokio::{sync::Notify, time::timeout_at};
 
 const OUTDATED_SLOT_GC_SEC: u64 = 30;
+const OUTDATED_SLOT_GC_BASE_MEM_MB: u64 = 128;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 const OUTDATED_SLOT_LEN: usize = 5;
 
@@ -62,6 +64,7 @@ pub struct NaiveCell {
     // request_id -> slot
     occupied_slots: DashMap<String, SlotInfo>,
     expected_release_count: AtomicI64,
+    expected_deadline: AtomicCell<Instant>,
 }
 
 impl NaiveCell {
@@ -74,7 +77,17 @@ impl NaiveCell {
             free_slots_notify: Notify::new(),
             occupied_slots: DashMap::new(),
             expected_release_count: AtomicI64::new(0),
+            expected_deadline: AtomicCell::new(Instant::now()),
         }
+    }
+
+    fn update_expected_deadline(&self, interval: Duration) {
+        let deadline = Instant::now() + interval;
+        self.expected_deadline.store(deadline);
+    }
+
+    fn is_expired(&self, time_s: u64) -> bool {
+        time_s * self.meta.memory_in_mb > OUTDATED_SLOT_GC_BASE_MEM_MB * OUTDATED_SLOT_GC_SEC
     }
 
     fn get_meta_info(&self) -> MetaInfo {
@@ -102,7 +115,9 @@ impl NaiveCell {
         let expected_execute_time = self.get_meta_info().expected_execute_time;
         let mut val = { self.free_slots.lock().len() as i64 };
         for item in &self.occupied_slots {
-            if (item.value().time_since_last_used() as f64) < expected_execute_time {
+            if (item.value().time_since_last_used() + OUTDATED_SLOT_GC_INTERVAL_SEC) as f64
+                > expected_execute_time
+            {
                 val += 1;
             }
         }
@@ -149,10 +164,9 @@ impl NaiveCell {
             self.expected_release_count.fetch_sub(1, Ordering::SeqCst);
             return Ok(slot);
         }
-
         if self.expected_release_count.fetch_sub(1, Ordering::SeqCst) > 0 {
-            if let Some(slot) = timeout(
-                Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC),
+            if let Some(slot) = timeout_at(
+                self.expected_deadline.load().into(),
                 self.clone().wait_for_free_slot(),
             )
             .await
@@ -185,8 +199,7 @@ impl NaiveCell {
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.front() {
-            if free_slots.len() < OUTDATED_SLOT_LEN
-                && info.time_since_last_used() < OUTDATED_SLOT_GC_SEC
+            if free_slots.len() < OUTDATED_SLOT_LEN && !self.is_expired(info.time_since_last_used())
             {
                 break;
             }
@@ -234,6 +247,8 @@ impl Cell for NaiveCell {
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
             while let Some(cell) = weak_cell.upgrade() {
+                let interval = Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC);
+                cell.update_expected_deadline(interval);
                 let key = cell.meta.key.clone();
                 let count = cell.clone().destroy_outdated_slots().await;
                 if count != 0 {
@@ -243,10 +258,7 @@ impl Cell for NaiveCell {
                 if count != 0 {
                     log::info!("cell {}, expected_release_count {}", key, count);
                 }
-                tokio::time::sleep(tokio::time::Duration::from_secs(
-                    OUTDATED_SLOT_GC_INTERVAL_SEC,
-                ))
-                .await;
+                tokio::time::sleep(interval).await;
             }
         });
         cell
