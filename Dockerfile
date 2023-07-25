@@ -16,6 +16,7 @@ RUN rm -rf ./target
 FROM registry.cn-beijing.aliyuncs.com/cloudnative-challenge/ubuntu:latest
 
 # Update the package list and install required packages.
+RUN sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C
 RUN apt-get update && apt-get install -y netcat curl
 
 # Set the working directory to /app.
