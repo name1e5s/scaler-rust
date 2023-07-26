@@ -26,7 +26,6 @@ use tokio::{sync::Notify, time::timeout_at};
 const OUTDATED_SLOT_GC_SEC: u64 = 30;
 const OUTDATED_SLOT_GC_BASE_MEM_MB: u64 = 128;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
-const OUTDATED_SLOT_LEN: usize = 5;
 
 struct SlotInfo {
     slot: Slot,
@@ -199,8 +198,7 @@ impl NaiveCell {
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.front() {
-            if free_slots.len() < OUTDATED_SLOT_LEN && !self.is_expired(info.time_since_last_used())
-            {
+            if !self.is_expired(info.time_since_last_used()) {
                 break;
             }
             to_free.push(free_slots.pop_front().expect("peeked"));
