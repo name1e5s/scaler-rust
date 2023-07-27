@@ -1,46 +1,31 @@
 use crate::{
+    cell::metric::{CellMetric, SlotMetric},
     model::{self, Slot},
     platform::Platform,
-    scheduler::cell::Cell,
-    util,
 };
-use anyhow::{anyhow, Result};
-use crossbeam_utils::atomic::AtomicCell;
+use anyhow::Result;
 use dashmap::DashMap;
-use futures::{
-    future::{select, Either},
-    Future,
-};
 use parking_lot::Mutex;
-use std::{
-    collections::VecDeque,
-    sync::{
-        atomic::{AtomicI64, Ordering},
-        Arc,
-    },
-    time::{Duration, Instant},
-};
-use tokio::{sync::Notify, time::timeout_at};
-use crate::cell::metric::{SlotMetric, CellMetric};
+use std::{collections::VecDeque, sync::Arc};
+use tokio::sync::Notify;
 
 pub struct SlotWithMetric {
-    slot: Slot,
-    metric: SlotMetric,
+    pub slot: Slot,
+    pub metric: SlotMetric,
 }
 
 pub struct BaseCell {
-    meta: model::Meta,
-    client: Arc<Platform>,
-    free_slots: Mutex<VecDeque<SlotWithMetric>>,
-    free_slots_notify: Notify,
+    pub meta: model::Meta,
+    pub client: Arc<Platform>,
+    pub free_slots: Mutex<VecDeque<SlotWithMetric>>,
+    pub free_slots_notify: Notify,
     // request_id -> slot
-    occupied_slots: DashMap<String, SlotWithMetric>,
-    cell_metric: CellMetric,
+    pub occupied_slots: DashMap<String, SlotWithMetric>,
+    pub cell_metric: CellMetric,
 }
 
-
 impl BaseCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> BaseCell {
+    pub fn new(meta: model::Meta, client: Arc<Platform>) -> BaseCell {
         BaseCell {
             meta,
             client,
@@ -51,29 +36,45 @@ impl BaseCell {
         }
     }
 
-    fn try_get_free_slot(&self) -> Option<SlotWithMetric> {
+    pub fn try_get_free_slot(&self) -> Option<SlotWithMetric> {
         let mut free_slots = self.free_slots.lock();
         free_slots.pop_back()
     }
 
-    fn put_free_slot_fresh(&self, mut info: SlotWithMetric) {
+    pub fn put_free_slot_fresh(&self, mut info: SlotWithMetric) {
         info.metric.update_last_used();
         self.put_free_slot(info)
     }
 
-    fn put_free_slot(&self, info: SlotWithMetric) {
+    pub fn put_free_slot(&self, info: SlotWithMetric) {
         let mut free_slots = self.free_slots.lock();
         free_slots.push_back(info);
         drop(free_slots);
         self.free_slots_notify.notify_one();
     }
 
-    async fn wait_for_free_slot(self: Arc<Self>) -> Option<SlotWithMetric> {
+    pub async fn wait_for_free_slot(self: Arc<Self>) -> Option<SlotWithMetric> {
         self.free_slots_notify.notified().await;
         self.try_get_free_slot()
     }
 
-    async fn destroy_slot(&self, slot: &SlotWithMetric) -> Result<()> {
+   pub  async fn create_free_slot(self: Arc<Self>) -> Result<SlotWithMetric> {
+        let slot = self
+            .client
+            .create_slot(
+                model::ResourceConfig {
+                    memory_in_megabytes: self.meta.memory_in_mb,
+                },
+                self.meta.clone(),
+            )
+            .await?;
+        Ok(SlotWithMetric {
+            slot,
+            metric: SlotMetric::new(),
+        })
+    }
+
+    pub async fn destroy_slot(&self, slot: &SlotWithMetric) -> Result<()> {
         let raw_slot = &slot.slot;
         self.client
             .destroy_slot(&raw_slot.instance_id, &raw_slot.id)
