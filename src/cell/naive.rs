@@ -6,64 +6,51 @@ use crate::{
     util,
 };
 use anyhow::{anyhow, Result};
-use crossbeam_utils::atomic::AtomicCell;
 use dashmap::DashMap;
 use futures::{
     future::{select, Either},
     Future,
 };
 use parking_lot::Mutex;
-use std::{
-    collections::VecDeque,
-    sync::{
-        atomic::{AtomicI64, Ordering},
-        Arc,
-    },
-    time::{Duration, Instant},
-};
-use tokio::{sync::Notify, time::timeout_at};
+use std::{collections::BinaryHeap, sync::Arc};
+use tokio::sync::Notify;
 
-const OUTDATED_SLOT_GC_SEC: u64 = 30;
-const OUTDATED_SLOT_GC_BASE_MEM_MB: u64 = 128;
+const OUTDATED_SLOT_GC_SEC: u64 = 300;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
+const OUTDATED_SLOT_LEN: usize = 5;
 
 struct SlotInfo {
     slot: Slot,
     last_used: u64,
 }
 
-impl SlotInfo {
-    fn update_last_used(&mut self) {
-        self.last_used = util::current_timestamp();
-    }
-
-    fn time_since_last_used(&self) -> u64 {
-        util::current_timestamp() - self.last_used
+impl PartialEq for SlotInfo {
+    fn eq(&self, other: &Self) -> bool {
+        self.last_used == other.last_used
     }
 }
 
-#[derive(Default, Clone)]
-struct MetaInfo {
-    expected_execute_time: f64,
+impl Eq for SlotInfo {}
+
+impl PartialOrd for SlotInfo {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.last_used.partial_cmp(&other.last_used)
+    }
 }
 
-impl MetaInfo {
-    fn update_with(&mut self, info: &SlotInfo) {
-        self.expected_execute_time =
-            self.expected_execute_time * 0.7 + info.time_since_last_used() as f64 * 0.3;
+impl Ord for SlotInfo {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.last_used.cmp(&other.last_used)
     }
 }
 
 pub struct NaiveCell {
     meta: model::Meta,
-    meta_info: Mutex<MetaInfo>,
     client: Arc<Platform>,
-    free_slots: Mutex<VecDeque<SlotInfo>>,
+    free_slots: Mutex<BinaryHeap<SlotInfo>>,
     free_slots_notify: Notify,
     // request_id -> slot
     occupied_slots: DashMap<String, SlotInfo>,
-    expected_release_count: AtomicI64,
-    expected_deadline: AtomicCell<Instant>,
 }
 
 impl NaiveCell {
@@ -71,57 +58,27 @@ impl NaiveCell {
         NaiveCell {
             meta,
             client,
-            meta_info: Mutex::new(MetaInfo::default()),
-            free_slots: Mutex::new(VecDeque::new()),
+            free_slots: Mutex::new(BinaryHeap::new()),
             free_slots_notify: Notify::new(),
             occupied_slots: DashMap::new(),
-            expected_release_count: AtomicI64::new(0),
-            expected_deadline: AtomicCell::new(Instant::now()),
         }
-    }
-
-    fn update_expected_deadline(&self, interval: Duration) {
-        let deadline = Instant::now() + interval;
-        self.expected_deadline.store(deadline);
-    }
-
-    fn is_expired(&self, time_s: u64) -> bool {
-        time_s * self.meta.memory_in_mb > OUTDATED_SLOT_GC_BASE_MEM_MB * OUTDATED_SLOT_GC_SEC
-    }
-
-    fn get_meta_info(&self) -> MetaInfo {
-        self.meta_info.lock().clone()
     }
 
     fn try_get_free_slot(&self) -> Option<SlotInfo> {
         let mut free_slots = self.free_slots.lock();
-        free_slots.pop_back()
+        free_slots.pop()
     }
 
     fn put_free_slot_fresh(&self, mut info: SlotInfo) {
-        info.update_last_used();
+        info.last_used = util::current_timestamp();
         self.put_free_slot(info)
     }
 
     fn put_free_slot(&self, info: SlotInfo) {
         let mut free_slots = self.free_slots.lock();
-        free_slots.push_back(info);
+        free_slots.push(info);
         drop(free_slots);
         self.free_slots_notify.notify_one();
-    }
-
-    fn update_expected_release_count(&self) -> i64 {
-        let expected_execute_time = self.get_meta_info().expected_execute_time;
-        let mut val = { self.free_slots.lock().len() as i64 };
-        for item in &self.occupied_slots {
-            if (item.value().time_since_last_used() + OUTDATED_SLOT_GC_INTERVAL_SEC) as f64
-                > expected_execute_time
-            {
-                val += 1;
-            }
-        }
-        self.expected_release_count.store(val, Ordering::SeqCst);
-        val
     }
 
     async fn wait_for_free_slot(self: Arc<Self>) -> Option<SlotInfo> {
@@ -160,20 +117,7 @@ impl NaiveCell {
 
     async fn get_or_create_free_slot(self: Arc<Self>) -> Result<SlotInfo> {
         if let Some(slot) = self.try_get_free_slot() {
-            self.expected_release_count.fetch_sub(1, Ordering::SeqCst);
             return Ok(slot);
-        }
-        if self.expected_release_count.fetch_sub(1, Ordering::SeqCst) > 0 {
-            if let Some(slot) = timeout_at(
-                self.expected_deadline.load().into(),
-                self.clone().wait_for_free_slot(),
-            )
-            .await
-            .ok()
-            .flatten()
-            {
-                return Ok(slot);
-            }
         }
 
         match select(
@@ -197,11 +141,13 @@ impl NaiveCell {
     fn select_outdated_slots(&self) -> Vec<SlotInfo> {
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
-        while let Some(info) = free_slots.front() {
-            if !self.is_expired(info.time_since_last_used()) {
+        while let Some(info) = free_slots.peek() {
+            if free_slots.len() < OUTDATED_SLOT_LEN
+                && util::current_timestamp() - info.last_used < OUTDATED_SLOT_GC_SEC
+            {
                 break;
             }
-            to_free.push(free_slots.pop_front().expect("peeked"));
+            to_free.push(free_slots.pop().expect("peeked"));
         }
         to_free
     }
@@ -216,23 +162,12 @@ impl NaiveCell {
     async fn destroy_outdated_slots(self: Arc<Self>) -> usize {
         let to_free = self.select_outdated_slots();
         let mut result = 0;
-        let mut futs = vec![];
         for slot in to_free {
-            let cloned_self = self.clone();
-            let fut = tokio::spawn(async move {
-                if let Err(e) = cloned_self.destroy_slot(&slot).await {
-                    log::error!("destroy slot failed: {:?}, will retry", e);
-                    cloned_self.put_free_slot(slot);
-                    return None;
-                }
-                Some(())
-            });
-            futs.push(fut);
-        }
-        for fut in futs {
-            if fut.await.ok().flatten().is_some() {
-                result += 1;
+            if let Err(e) = self.destroy_slot(&slot).await {
+                log::error!("destroy slot failed: {:?}, will retry", e);
+                self.put_free_slot(slot);
             }
+            result += 1;
         }
         result
     }
@@ -245,18 +180,13 @@ impl Cell for NaiveCell {
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
             while let Some(cell) = weak_cell.upgrade() {
-                let interval = Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC);
-                cell.update_expected_deadline(interval);
                 let key = cell.meta.key.clone();
-                let count = cell.clone().destroy_outdated_slots().await;
-                if count != 0 {
-                    log::info!("cell {}, destroyd {} outdated slots", key, count);
-                }
-                let count = cell.update_expected_release_count();
-                if count != 0 {
-                    log::info!("cell {}, expected_release_count {}", key, count);
-                }
-                tokio::time::sleep(interval).await;
+                let count = cell.destroy_outdated_slots().await;
+                log::info!("cell {}, destroyd {} outdated slots", key, count);
+                tokio::time::sleep(tokio::time::Duration::from_secs(
+                    OUTDATED_SLOT_GC_INTERVAL_SEC,
+                ))
+                .await;
             }
         });
         cell
@@ -266,8 +196,7 @@ impl Cell for NaiveCell {
         request_id: String,
         _timestamp: u64,
     ) -> Result<model::Assignment> {
-        let mut slot = self.clone().get_or_create_free_slot().await?;
-        slot.update_last_used();
+        let slot = self.clone().get_or_create_free_slot().await?;
         let instance_id = slot.slot.instance_id.clone();
         self.occupied_slots.insert(request_id.clone(), slot);
         Ok(model::Assignment {
@@ -286,9 +215,6 @@ impl Cell for NaiveCell {
             .remove(&assignment.request_id)
             .ok_or_else(|| anyhow!("occupied slot, request_id: {}", assignment.request_id))?
             .1;
-        {
-            self.meta_info.lock().update_with(&slot);
-        }
         if idle_reason.need_destroy {
             self.destroy_slot(&slot).await
         } else {
