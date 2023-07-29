@@ -2,7 +2,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use crate::{cell::BaseCell, model, platform::Platform, scheduler::cell::Cell};
+use crate::{cell::BaseCell, model, platform::Platform, scheduler::cell::{Cell, CellFactory}};
 use anyhow::Result;
 use futures::{
     future::{select, Either},
@@ -88,10 +88,6 @@ impl StorkCell {
 
 #[tonic::async_trait]
 impl Cell for StorkCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<Self> {
-        let cell = Arc::new(StorkCell::new(meta, client));
-        cell
-    }
     async fn assign(
         self: Arc<Self>,
         request_id: String,
@@ -113,9 +109,16 @@ impl Cell for StorkCell {
     }
     async fn idle(
         self: Arc<Self>,
-        assignment: model::Assignment,
-        idle_reason: model::IdleReason,
+        _assignment: model::Assignment,
+        _idle_reason: model::IdleReason,
     ) -> Result<()> {
         Ok(())
+    }
+}
+
+impl CellFactory<StorkCell> for StorkCell {
+    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<Self> {
+        let cell = Arc::new(StorkCell::new(meta, client));
+        cell
     }
 }

@@ -1,13 +1,12 @@
 use crate::{model, platform::Platform};
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use super::Scheduler;
 
 #[tonic::async_trait]
 pub trait Cell: Send + Sync + 'static {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<Self>;
     async fn assign(
         self: Arc<Self>,
         request_id: String,
@@ -20,22 +19,30 @@ pub trait Cell: Send + Sync + 'static {
     ) -> Result<()>;
 }
 
-pub struct CellScheduler<T>
+pub trait CellFactory<T: Cell>: Send + Sync + 'static {
+    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<T>;
+}
+
+pub struct CellScheduler<T, U>
 where
+    U: CellFactory<T>,
     T: Cell,
 {
     client: Arc<Platform>,
     cell_map: DashMap<String, Arc<T>>,
+    _phantom: PhantomData<U>,
 }
 
-impl<T> CellScheduler<T>
+impl<T, U> CellScheduler<T, U>
 where
+    U: CellFactory<T>,
     T: Cell,
 {
-    pub fn new(client: Platform) -> CellScheduler<T> {
+    pub fn new(client: Platform) -> CellScheduler<T, U> {
         CellScheduler {
             client: Arc::new(client),
             cell_map: DashMap::new(),
+            _phantom: PhantomData,
         }
     }
 
@@ -48,7 +55,7 @@ where
         if let Some(cell) = self.cell_map.get(key) {
             cell.clone()
         } else {
-            let cell = T::new(meta.clone(), self.client.clone());
+            let cell = U::new(meta.clone(), self.client.clone());
             self.cell_map.insert(meta.key.clone(), cell.clone());
             cell
         }
@@ -56,8 +63,9 @@ where
 }
 
 #[tonic::async_trait]
-impl<T> Scheduler for CellScheduler<T>
+impl<T, U> Scheduler for CellScheduler<T, U>
 where
+    U: CellFactory<T>,
     T: Cell,
 {
     async fn assign(

@@ -2,7 +2,7 @@
 use crate::{
     model::{self, Slot},
     platform::Platform,
-    scheduler::cell::Cell,
+    scheduler::cell::{Cell, CellFactory},
     util,
 };
 use anyhow::{anyhow, Result};
@@ -175,22 +175,6 @@ impl NaiveCell {
 
 #[tonic::async_trait]
 impl Cell for NaiveCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<Self> {
-        let cell = Arc::new(NaiveCell::new(meta, client));
-        let weak_cell = Arc::downgrade(&cell);
-        tokio::spawn(async move {
-            while let Some(cell) = weak_cell.upgrade() {
-                let key = cell.meta.key.clone();
-                let count = cell.destroy_outdated_slots().await;
-                log::info!("cell {}, destroyd {} outdated slots", key, count);
-                tokio::time::sleep(tokio::time::Duration::from_secs(
-                    OUTDATED_SLOT_GC_INTERVAL_SEC,
-                ))
-                .await;
-            }
-        });
-        cell
-    }
     async fn assign(
         self: Arc<Self>,
         request_id: String,
@@ -221,5 +205,24 @@ impl Cell for NaiveCell {
             self.put_free_slot_fresh(slot);
             Ok(())
         }
+    }
+}
+
+impl CellFactory<NaiveCell> for NaiveCell {
+    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveCell> {
+        let cell = Arc::new(NaiveCell::new(meta, client));
+        let weak_cell = Arc::downgrade(&cell);
+        tokio::spawn(async move {
+            while let Some(cell) = weak_cell.upgrade() {
+                let key = cell.meta.key.clone();
+                let count = cell.destroy_outdated_slots().await;
+                log::info!("cell {}, destroyd {} outdated slots", key, count);
+                tokio::time::sleep(tokio::time::Duration::from_secs(
+                    OUTDATED_SLOT_GC_INTERVAL_SEC,
+                ))
+                .await;
+            }
+        });
+        cell
     }
 }
