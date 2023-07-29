@@ -1,7 +1,7 @@
 use crate::{model, platform::Platform};
 use anyhow::{anyhow, Result};
 use dashmap::DashMap;
-use std::{marker::PhantomData, sync::Arc};
+use std::sync::Arc;
 
 use super::Scheduler;
 
@@ -20,7 +20,7 @@ pub trait Cell: Send + Sync + 'static {
 }
 
 pub trait CellFactory<T: Cell>: Send + Sync + 'static {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<T>;
+    fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<T>;
 }
 
 pub struct CellScheduler<T, U>
@@ -30,7 +30,7 @@ where
 {
     client: Arc<Platform>,
     cell_map: DashMap<String, Arc<T>>,
-    _phantom: PhantomData<U>,
+    factory: U,
 }
 
 impl<T, U> CellScheduler<T, U>
@@ -38,11 +38,11 @@ where
     U: CellFactory<T>,
     T: Cell,
 {
-    pub fn new(client: Platform) -> CellScheduler<T, U> {
+    pub fn new(factory: U, client: Platform) -> CellScheduler<T, U> {
         CellScheduler {
+            factory,
             client: Arc::new(client),
             cell_map: DashMap::new(),
-            _phantom: PhantomData,
         }
     }
 
@@ -55,7 +55,7 @@ where
         if let Some(cell) = self.cell_map.get(key) {
             cell.clone()
         } else {
-            let cell = U::new(meta.clone(), self.client.clone());
+            let cell = self.factory.new(meta.clone(), self.client.clone());
             self.cell_map.insert(meta.key.clone(), cell.clone());
             cell
         }

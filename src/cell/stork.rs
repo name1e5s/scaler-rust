@@ -2,7 +2,12 @@
 
 use std::{sync::Arc, time::Duration};
 
-use crate::{cell::BaseCell, model, platform::Platform, scheduler::cell::{Cell, CellFactory}};
+use crate::{
+    cell::BaseCell,
+    model,
+    platform::Platform,
+    scheduler::cell::{Cell, CellFactory},
+};
 use anyhow::Result;
 use futures::{
     future::{select, Either},
@@ -116,8 +121,10 @@ impl Cell for StorkCell {
     }
 }
 
-impl CellFactory<StorkCell> for StorkCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<Self> {
+pub struct StorkCellFactory;
+
+impl CellFactory<StorkCell> for StorkCellFactory {
+    fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<StorkCell> {
         let cell = Arc::new(StorkCell::new(meta, client));
         cell
     }

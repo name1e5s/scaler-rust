@@ -58,7 +58,7 @@ impl BaseCell {
         self.try_get_free_slot()
     }
 
-   pub  async fn create_free_slot(self: Arc<Self>) -> Result<SlotWithMetric> {
+    pub async fn create_free_slot(self: Arc<Self>) -> Result<SlotWithMetric> {
         let slot = self
             .client
             .create_slot(

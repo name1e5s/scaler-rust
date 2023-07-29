@@ -208,8 +208,10 @@ impl Cell for NaiveCell {
     }
 }
 
-impl CellFactory<NaiveCell> for NaiveCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveCell> {
+pub struct NaiveCellFactory;
+
+impl CellFactory<NaiveCell> for NaiveCellFactory {
+    fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveCell> {
         let cell = Arc::new(NaiveCell::new(meta, client));
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {

@@ -94,8 +94,7 @@ impl CellMetric {
     pub fn period_reset(&self) {
         self.assign_request_count_in_period
             .store(0, Ordering::SeqCst);
-        self.idle_request_count_in_period
-            .store(0, Ordering::SeqCst);
+        self.idle_request_count_in_period.store(0, Ordering::SeqCst);
     }
 
     pub fn schedule_time_recoder(&self) -> ScheduleTimeRecoder {
@@ -115,12 +114,13 @@ impl CellMetric {
     }
 
     pub fn update_expected_execute_time(&self, duration: u64) {
-        let _ = self.expected_execute_time_ms
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| {
-                let old = if old == 0 { duration } else { old };
-                let new = old as f64 * 0.7 + duration as f64 * 0.3;
-                Some(new as u64)
-            });
+        let _ =
+            self.expected_execute_time_ms
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |old| {
+                    let old = if old == 0 { duration } else { old };
+                    let new = old as f64 * 0.7 + duration as f64 * 0.3;
+                    Some(new as u64)
+                });
     }
 
     pub fn update_assign_request_count(&self) {

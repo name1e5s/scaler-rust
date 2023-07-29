@@ -1,7 +1,7 @@
 use anyhow::Result;
 use env_logger::{Builder, Env};
 use scaler::{
-    cell::NaiveCell, platform::Platform, rpc::scaler_server::ScalerServer,
+    cell::mixed::SimpleMixedCellFactory, platform::Platform, rpc::scaler_server::ScalerServer,
     scheduler::cell::CellScheduler, server::ScalerImpl,
 };
 use tonic::transport::Server;
@@ -12,7 +12,7 @@ async fn main() -> Result<()> {
 
     let addr = "127.0.0.1:9001".parse()?;
     let platform = Platform::new()?;
-    let scheduler: CellScheduler<NaiveCell, NaiveCell> = CellScheduler::new(platform);
+    let scheduler = CellScheduler::new(SimpleMixedCellFactory, platform);
     let server = ScalerImpl::new(scheduler);
 
     Server::builder()
