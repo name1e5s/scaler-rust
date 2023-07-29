@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use std::{collections::BinaryHeap, sync::Arc};
 use tokio::sync::Notify;
 
-const OUTDATED_SLOT_GC_SEC: u64 = 300;
+const OUTDATED_SLOT_GC_SEC: u64 = 150;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 const OUTDATED_SLOT_LEN: usize = 5;
 
