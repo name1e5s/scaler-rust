@@ -18,7 +18,11 @@ FROM ubuntu:latest
 # Update the package list and install required packages.
 #RUN apt-get install gpg -y
 # RUN apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 871920D1991BC93C
-RUN apt-get update && apt-get install -y netcat curl
+RUN sed -i s@/archive.ubuntu.com/@/mirrors.aliyun.com/@g /etc/apt/sources.list; \
+    sed -i s@/security.ubuntu.com/@/mirrors.aliyun.com/@g /etc/apt/sources.list; \
+    apt-get clean; \
+    apt-get update; \
+    apt-get install -y netcat curl
 
 # Set the working directory to /app.
 WORKDIR /app
