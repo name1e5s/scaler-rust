@@ -14,6 +14,7 @@ use futures::{
 };
 use parking_lot::Mutex;
 use std::{
+    cmp::{max, min},
     collections::VecDeque,
     sync::{
         atomic::{AtomicI64, Ordering},
@@ -110,9 +111,10 @@ impl MemoryCell {
         self.free_slots_notify.notify_one();
     }
 
-    fn update_expected_release_count(&self) -> i64 {
+    fn update_expected_release_count(&self) -> (i64, i64) {
         let expected_execute_time = self.get_meta_info().expected_execute_time;
-        let mut val = { self.free_slots.lock().len() as i64 };
+        let free_slot_count = { self.free_slots.lock().len() as i64 };
+        let mut val = 0;
         for item in &self.occupied_slots {
             if (item.value().time_since_last_used() + OUTDATED_SLOT_GC_INTERVAL_SEC) as f64
                 > expected_execute_time
@@ -120,8 +122,9 @@ impl MemoryCell {
                 val += 1;
             }
         }
-        self.expected_release_count.store(val, Ordering::SeqCst);
-        val
+        let result = min(val * 3, free_slot_count + val);
+        self.expected_release_count.store(result, Ordering::SeqCst);
+        (result, max(0, free_slot_count - 2 * val))
     }
 
     async fn wait_for_free_slot(self: Arc<Self>) -> Option<SlotInfo> {
@@ -206,6 +209,20 @@ impl MemoryCell {
         to_free
     }
 
+    fn select_n_slots(&self, mut n: i64) -> Vec<SlotInfo> {
+        let mut to_free = Vec::new();
+        let mut free_slots = self.free_slots.lock();
+        while n > 0 {
+            if let Some(_) = free_slots.front() {
+                to_free.push(free_slots.pop_front().expect("peeked"));
+            } else {
+                break;
+            }
+            n -= 1;
+        }
+        to_free
+    }
+
     async fn destroy_slot(&self, slot: &SlotInfo) -> Result<()> {
         let raw_slot = &slot.slot;
         self.client
@@ -213,8 +230,7 @@ impl MemoryCell {
             .await
     }
 
-    async fn destroy_outdated_slots(self: Arc<Self>) -> usize {
-        let to_free = self.select_outdated_slots();
+    async fn destroy_outdated_slots(self: Arc<Self>, to_free: Vec<SlotInfo>) -> usize {
         let mut result = 0;
         let mut futs = vec![];
         for slot in to_free {
@@ -288,13 +304,20 @@ impl CellFactory<MemoryCell> for MemoryCellFactory {
                 let interval = Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC);
                 cell.update_expected_deadline(interval);
                 let key = cell.meta.key.clone();
-                let count = cell.clone().destroy_outdated_slots().await;
+                let mut to_free = cell.select_outdated_slots();
+                let (count, destroy) = cell.update_expected_release_count();
+                if count != 0 || destroy != 0 {
+                    log::info!(
+                        "cell {}, expected_release_count {}, need destroy {}",
+                        key,
+                        count,
+                        destroy
+                    );
+                }
+                to_free.extend(cell.select_n_slots(destroy));
+                let count = cell.clone().destroy_outdated_slots(to_free).await;
                 if count != 0 {
                     log::info!("cell {}, destroyd {} outdated slots", key, count);
-                }
-                let count = cell.update_expected_release_count();
-                if count != 0 {
-                    log::info!("cell {}, expected_release_count {}", key, count);
                 }
                 tokio::time::sleep(interval).await;
             }
