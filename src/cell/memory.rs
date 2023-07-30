@@ -206,6 +206,20 @@ impl MemoryCell {
         to_free
     }
 
+    fn select_n_slots(&self, mut n: i64) -> Vec<SlotInfo> {
+        let mut to_free = Vec::new();
+        let mut free_slots = self.free_slots.lock();
+        while n > 0 {
+            if let Some(_) = free_slots.front() {
+                to_free.push(free_slots.pop_front().expect("peeked"));
+            } else {
+                break;
+            }
+            n -= 1;
+        }
+        to_free
+    }
+
     async fn destroy_slot(&self, slot: &SlotInfo) -> Result<()> {
         let raw_slot = &slot.slot;
         self.client
@@ -213,8 +227,7 @@ impl MemoryCell {
             .await
     }
 
-    async fn destroy_outdated_slots(self: Arc<Self>) -> usize {
-        let to_free = self.select_outdated_slots();
+    async fn destroy_outdated_slots(self: Arc<Self>, to_free: Vec<SlotInfo>) -> usize {
         let mut result = 0;
         let mut futs = vec![];
         for slot in to_free {
@@ -285,13 +298,26 @@ impl CellFactory<MemoryCell> for MemoryCellFactory {
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
             while let Some(cell) = weak_cell.upgrade() {
+                let old_release_count = cell.expected_release_count.load(Ordering::SeqCst);
                 let interval = Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC);
                 cell.update_expected_deadline(interval);
                 let key = cell.meta.key.clone();
-                let count = cell.clone().destroy_outdated_slots().await;
-                if count != 0 {
-                    log::info!("cell {}, destroyd {} outdated slots", key, count);
-                }
+                let to_free = {
+                    let mut vec = cell.clone().select_outdated_slots();
+                    let more_free = cell
+                        .clone()
+                        .select_n_slots(old_release_count / 2 - vec.len() as i64);
+                    vec.extend(more_free);
+                    vec
+                };
+                let cloned_cell = cell.clone();
+                let cloned_key = key.clone();
+                tokio::spawn(async move {
+                    let count = cloned_cell.destroy_outdated_slots(to_free).await;
+                    if count != 0 {
+                        log::info!("cell {}, destroyd {} outdated slots", cloned_key, count);
+                    }
+                });
                 let count = cell.update_expected_release_count();
                 if count != 0 {
                     log::info!("cell {}, expected_release_count {}", key, count);
