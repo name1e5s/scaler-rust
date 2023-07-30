@@ -12,8 +12,8 @@ use futures::{
     Future,
 };
 use parking_lot::Mutex;
-use std::{collections::BinaryHeap, sync::Arc};
-use tokio::sync::Notify;
+use std::{collections::BinaryHeap, sync::Arc, time::Duration};
+use tokio::{sync::Notify, time::timeout};
 
 const OUTDATED_SLOT_GC_SEC: u64 = 300;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
@@ -117,6 +117,17 @@ impl NaiveCell {
 
     async fn get_or_create_free_slot(self: Arc<Self>) -> Result<SlotInfo> {
         if let Some(slot) = self.try_get_free_slot() {
+            return Ok(slot);
+        }
+
+        if let Some(slot) = timeout(
+            Duration::from_millis(100),
+            self.clone().wait_for_free_slot(),
+        )
+        .await
+        .ok()
+        .flatten()
+        {
             return Ok(slot);
         }
 
