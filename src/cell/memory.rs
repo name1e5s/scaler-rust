@@ -16,14 +16,14 @@ use parking_lot::Mutex;
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicI64, Ordering},
+        atomic::{AtomicI64, AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration, Instant},
+    time::{Duration, Instant}, cmp::{max, min},
 };
 use tokio::{sync::Notify, time::timeout_at};
 
-const OUTDATED_SLOT_GC_SEC: u64 = 30;
+const OUTDATED_SLOT_GC_SEC: u64 = 15;
 const OUTDATED_SLOT_GC_BASE_MEM_MB: u64 = 128;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 
@@ -64,6 +64,8 @@ pub struct MemoryCell {
     occupied_slots: DashMap<String, SlotInfo>,
     expected_release_count: AtomicI64,
     expected_deadline: AtomicCell<Instant>,
+    assign_count: AtomicI64,
+    memory_limit: AtomicU64,
 }
 
 impl MemoryCell {
@@ -77,6 +79,8 @@ impl MemoryCell {
             occupied_slots: DashMap::new(),
             expected_release_count: AtomicI64::new(0),
             expected_deadline: AtomicCell::new(Instant::now()),
+            assign_count: AtomicI64::new(0),
+            memory_limit: AtomicU64::new(OUTDATED_SLOT_GC_BASE_MEM_MB * OUTDATED_SLOT_GC_SEC),
         }
     }
 
@@ -85,8 +89,23 @@ impl MemoryCell {
         self.expected_deadline.store(deadline);
     }
 
+    fn update_memory_limit(&self, hint: i64) {
+        let current = self.memory_limit.load(Ordering::SeqCst);
+        let limit_base = OUTDATED_SLOT_GC_BASE_MEM_MB * OUTDATED_SLOT_GC_SEC;
+        let limit_max = self.meta.memory_in_mb * OUTDATED_SLOT_GC_SEC * 2;
+        let mut new = current;
+        if hint > 10 {
+            new = current + limit_base * (hint as f64 / 5.).ln().ceil() as u64;
+        } else if hint < -10 {
+            new = current - limit_base * (-hint as f64 / 5.).ln().ceil() as u64;
+        }
+        new = max(new, limit_base);
+        new = min(new, limit_max);
+        self.memory_limit.store(new, Ordering::SeqCst);
+    }
+
     fn is_expired(&self, time_s: u64) -> bool {
-        time_s * self.meta.memory_in_mb > OUTDATED_SLOT_GC_BASE_MEM_MB * OUTDATED_SLOT_GC_SEC
+        time_s * self.meta.memory_in_mb > self.memory_limit.load(Ordering::SeqCst)
     }
 
     fn get_meta_info(&self) -> MetaInfo {
@@ -258,6 +277,7 @@ impl Cell for MemoryCell {
         request_id: String,
         _timestamp: u64,
     ) -> Result<model::Assignment> {
+        self.assign_count.fetch_add(1, Ordering::SeqCst);
         let mut slot = self.clone().get_or_create_free_slot().await?;
         slot.update_last_used();
         let instance_id = slot.slot.instance_id.clone();
@@ -297,8 +317,11 @@ impl CellFactory<MemoryCell> for MemoryCellFactory {
         let cell = Arc::new(MemoryCell::new(meta, client));
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
+            let mut last_period_assign_count = 0;
             while let Some(cell) = weak_cell.upgrade() {
+                let assign_count = cell.assign_count.swap(0, Ordering::SeqCst);
                 let old_release_count = cell.expected_release_count.load(Ordering::SeqCst);
+                cell.update_memory_limit(assign_count - last_period_assign_count);
                 let interval = Duration::from_secs(OUTDATED_SLOT_GC_INTERVAL_SEC);
                 cell.update_expected_deadline(interval);
                 let key = cell.meta.key.clone();
@@ -322,6 +345,7 @@ impl CellFactory<MemoryCell> for MemoryCellFactory {
                 if count != 0 {
                     log::info!("cell {}, expected_release_count {}", key, count);
                 }
+                last_period_assign_count = assign_count;
                 tokio::time::sleep(interval).await;
             }
         });
