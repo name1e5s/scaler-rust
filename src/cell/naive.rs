@@ -15,9 +15,9 @@ use parking_lot::Mutex;
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, time::timeout};
 
-const OUTDATED_SLOT_GC_SEC: u64 = 300;
+const OUTDATED_SLOT_GC_SEC: u64 = 60;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
-const OUTDATED_SLOT_LEN: usize = 5;
+const OUTDATED_SLOT_LEN: usize = 30;
 
 struct SlotInfo {
     slot: Slot,
@@ -121,7 +121,7 @@ impl NaiveCell {
         }
 
         if let Some(slot) = timeout(
-            Duration::from_millis(100),
+            Duration::from_secs(4),
             self.clone().wait_for_free_slot(),
         )
         .await
