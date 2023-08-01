@@ -15,9 +15,8 @@ use parking_lot::Mutex;
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, time::timeout};
 
-const OUTDATED_SLOT_GC_SEC: u64 = 60;
+const OUTDATED_SLOT_GC_SEC: u64 = 200;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
-const OUTDATED_SLOT_LEN: usize = 30;
 
 struct SlotInfo {
     slot: Slot,
@@ -120,13 +119,10 @@ impl NaiveCell {
             return Ok(slot);
         }
 
-        if let Some(slot) = timeout(
-            Duration::from_secs(4),
-            self.clone().wait_for_free_slot(),
-        )
-        .await
-        .ok()
-        .flatten()
+        if let Some(slot) = timeout(Duration::from_secs(1), self.clone().wait_for_free_slot())
+            .await
+            .ok()
+            .flatten()
         {
             return Ok(slot);
         }
@@ -153,9 +149,7 @@ impl NaiveCell {
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.peek() {
-            if free_slots.len() < OUTDATED_SLOT_LEN
-                && util::current_timestamp() - info.last_used < OUTDATED_SLOT_GC_SEC
-            {
+            if util::current_timestamp() - info.last_used < OUTDATED_SLOT_GC_SEC {
                 break;
             }
             to_free.push(free_slots.pop().expect("peeked"));
@@ -229,7 +223,9 @@ impl CellFactory<NaiveCell> for NaiveCellFactory {
             while let Some(cell) = weak_cell.upgrade() {
                 let key = cell.meta.key.clone();
                 let count = cell.destroy_outdated_slots().await;
-                log::info!("cell {}, destroyd {} outdated slots", key, count);
+                if count != 0 {
+                    log::info!("cell {}, destroyd {} outdated slots", key, count);
+                }
                 tokio::time::sleep(tokio::time::Duration::from_secs(
                     OUTDATED_SLOT_GC_INTERVAL_SEC,
                 ))

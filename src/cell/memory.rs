@@ -14,12 +14,13 @@ use futures::{
 };
 use parking_lot::Mutex;
 use std::{
+    cmp::{max, min},
     collections::VecDeque,
     sync::{
         atomic::{AtomicI64, AtomicU64, Ordering},
         Arc,
     },
-    time::{Duration, Instant}, cmp::{max, min},
+    time::{Duration, Instant},
 };
 use tokio::{sync::Notify, time::timeout_at};
 
