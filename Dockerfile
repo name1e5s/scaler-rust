@@ -9,6 +9,7 @@ WORKDIR /build
 # Copy the source code excluding the 'data' directory
 COPY . ./
 RUN rm -rf ./data
+RUN rm -rf ./.git
 RUN cargo build --release
 RUN cp ./target/release/scaler ./
 RUN rm -rf ./target
