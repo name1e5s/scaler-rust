@@ -15,7 +15,8 @@ use parking_lot::Mutex;
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, time::timeout};
 
-const OUTDATED_SLOT_GC_SEC: u64 = 200;
+const OUTDATED_SLOT_GC_SEC_1: u64 = 300;
+const OUTDATED_SLOT_GC_SEC_2: u64 = 200;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 
 struct SlotInfo {
@@ -46,6 +47,7 @@ impl Ord for SlotInfo {
 pub struct NaiveCell {
     meta: model::Meta,
     client: Arc<Platform>,
+    outdated_gc_sec: u64,
     free_slots: Mutex<BinaryHeap<SlotInfo>>,
     free_slots_notify: Notify,
     // request_id -> slot
@@ -53,10 +55,11 @@ pub struct NaiveCell {
 }
 
 impl NaiveCell {
-    fn new(meta: model::Meta, client: Arc<Platform>) -> NaiveCell {
+    fn new(meta: model::Meta, client: Arc<Platform>, outdated_gc_sec: u64) -> NaiveCell {
         NaiveCell {
             meta,
             client,
+            outdated_gc_sec,
             free_slots: Mutex::new(BinaryHeap::new()),
             free_slots_notify: Notify::new(),
             occupied_slots: DashMap::new(),
@@ -149,7 +152,7 @@ impl NaiveCell {
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.peek() {
-            if util::current_timestamp() - info.last_used < OUTDATED_SLOT_GC_SEC {
+            if util::current_timestamp() - info.last_used < self.outdated_gc_sec {
                 break;
             }
             to_free.push(free_slots.pop().expect("peeked"));
@@ -217,7 +220,12 @@ pub struct NaiveCellFactory;
 
 impl CellFactory<NaiveCell> for NaiveCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveCell> {
-        let cell = Arc::new(NaiveCell::new(meta, client));
+        let outdated_gc_sec = if meta.key.ends_with("1") {
+            OUTDATED_SLOT_GC_SEC_1
+        } else {
+            OUTDATED_SLOT_GC_SEC_2
+        };
+        let cell = Arc::new(NaiveCell::new(meta, client, outdated_gc_sec));
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
             while let Some(cell) = weak_cell.upgrade() {
