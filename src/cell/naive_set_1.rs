@@ -44,7 +44,7 @@ impl Ord for SlotInfo {
     }
 }
 
-pub struct NaiveCell {
+pub struct NaiveSet1Cell {
     meta: model::Meta,
     client: Arc<Platform>,
     outdated_gc_sec: u64,
@@ -54,9 +54,9 @@ pub struct NaiveCell {
     occupied_slots: DashMap<String, SlotInfo>,
 }
 
-impl NaiveCell {
-    fn new(meta: model::Meta, client: Arc<Platform>, outdated_gc_sec: u64) -> NaiveCell {
-        NaiveCell {
+impl NaiveSet1Cell {
+    fn new(meta: model::Meta, client: Arc<Platform>, outdated_gc_sec: u64) -> NaiveSet1Cell {
+        NaiveSet1Cell {
             meta,
             client,
             outdated_gc_sec,
@@ -169,20 +169,21 @@ impl NaiveCell {
 
     async fn destroy_outdated_slots(self: Arc<Self>) -> usize {
         let to_free = self.select_outdated_slots();
-        let mut result = 0;
-        for slot in to_free {
-            if let Err(e) = self.destroy_slot(&slot).await {
-                log::error!("destroy slot failed: {:?}, will retry", e);
-                self.put_free_slot(slot);
+        let result = to_free.len();
+        tokio::spawn(async move {
+            for slot in to_free {
+                if let Err(e) = self.destroy_slot(&slot).await {
+                    log::error!("destroy slot failed: {:?}, will retry", e);
+                    self.put_free_slot(slot);
+                }
             }
-            result += 1;
-        }
+        });
         result
     }
 }
 
 #[tonic::async_trait]
-impl Cell for NaiveCell {
+impl Cell for NaiveSet1Cell {
     async fn assign(
         self: Arc<Self>,
         request_id: String,
@@ -216,16 +217,16 @@ impl Cell for NaiveCell {
     }
 }
 
-pub struct NaiveCellFactory;
+pub struct NaiveSet1CellFactory;
 
-impl CellFactory<NaiveCell> for NaiveCellFactory {
-    fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveCell> {
+impl CellFactory<NaiveSet1Cell> for NaiveSet1CellFactory {
+    fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<NaiveSet1Cell> {
         let outdated_gc_sec = if meta.key.ends_with("1") {
             OUTDATED_SLOT_GC_SEC_1
         } else {
             OUTDATED_SLOT_GC_SEC_2
         };
-        let cell = Arc::new(NaiveCell::new(meta, client, outdated_gc_sec));
+        let cell = Arc::new(NaiveSet1Cell::new(meta, client, outdated_gc_sec));
         let weak_cell = Arc::downgrade(&cell);
         tokio::spawn(async move {
             while let Some(cell) = weak_cell.upgrade() {

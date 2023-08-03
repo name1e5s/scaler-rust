@@ -51,7 +51,7 @@ struct MetaInfo {
 impl MetaInfo {
     fn update_with(&mut self, info: &SlotInfo) {
         self.expected_execute_time =
-            self.expected_execute_time * 0.7 + info.time_since_last_used() as f64 * 0.3;
+            self.expected_execute_time * 0.6 + info.time_since_last_used() as f64 * 0.4;
     }
 }
 
