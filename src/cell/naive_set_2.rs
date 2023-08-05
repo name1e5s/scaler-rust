@@ -122,13 +122,10 @@ impl NaiveSet2Cell {
             return Ok(slot);
         }
 
-        if let Some(slot) = timeout(
-            Duration::from_millis(800),
-            self.clone().wait_for_free_slot(),
-        )
-        .await
-        .ok()
-        .flatten()
+        if let Some(slot) = timeout(Duration::from_secs(1), self.clone().wait_for_free_slot())
+            .await
+            .ok()
+            .flatten()
         {
             return Ok(slot);
         }
@@ -152,10 +149,11 @@ impl NaiveSet2Cell {
     }
 
     fn select_outdated_slots(&self) -> Vec<SlotInfo> {
+        let current = util::current_timestamp();
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.peek() {
-            if util::current_timestamp() - info.last_used < self.outdated_gc_sec {
+            if current - info.last_used < self.outdated_gc_sec {
                 break;
             }
             to_free.push(free_slots.pop().expect("peeked"));

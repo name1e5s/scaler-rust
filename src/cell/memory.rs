@@ -38,8 +38,12 @@ impl SlotInfo {
         self.last_used = util::current_timestamp();
     }
 
+    fn time_between_last_used(&self, current: u64) -> u64 {
+        current - self.last_used
+    }
+
     fn time_since_last_used(&self) -> u64 {
-        util::current_timestamp() - self.last_used
+        self.time_between_last_used(util::current_timestamp())
     }
 }
 
@@ -131,10 +135,11 @@ impl MemoryCell {
     }
 
     fn update_expected_release_count(&self) -> i64 {
+        let current = util::current_timestamp();
         let expected_execute_time = self.get_meta_info().expected_execute_time;
         let mut val = { self.free_slots.lock().len() as i64 };
         for item in &self.occupied_slots {
-            if (item.value().time_since_last_used() + OUTDATED_SLOT_GC_INTERVAL_SEC) as f64
+            if (item.value().time_between_last_used(current) + OUTDATED_SLOT_GC_INTERVAL_SEC) as f64
                 > expected_execute_time
             {
                 val += 1;
@@ -215,10 +220,11 @@ impl MemoryCell {
     }
 
     fn select_outdated_slots(&self) -> Vec<SlotInfo> {
+        let current = util::current_timestamp();
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.front() {
-            if !self.is_expired(info.time_since_last_used()) {
+            if !self.is_expired(info.time_between_last_used(current)) {
                 break;
             }
             to_free.push(free_slots.pop_front().expect("peeked"));
