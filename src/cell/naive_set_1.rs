@@ -15,7 +15,7 @@ use parking_lot::Mutex;
 use std::{collections::BinaryHeap, sync::Arc, time::Duration};
 use tokio::{sync::Notify, time::timeout};
 
-const OUTDATED_SLOT_GC_SEC_1: u64 = 300;
+const OUTDATED_SLOT_GC_SEC_1: u64 = 60;
 const OUTDATED_SLOT_GC_SEC_2: u64 = 200;
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 5;
 
@@ -122,7 +122,7 @@ impl NaiveSet1Cell {
             return Ok(slot);
         }
 
-        if let Some(slot) = timeout(Duration::from_secs(1), self.clone().wait_for_free_slot())
+        if let Some(slot) = timeout(Duration::from_secs(2), self.clone().wait_for_free_slot())
             .await
             .ok()
             .flatten()
@@ -130,6 +130,7 @@ impl NaiveSet1Cell {
             return Ok(slot);
         }
 
+        self.clone().create_slot_in_background(self.clone().create_free_slot());
         match select(
             Box::pin(self.clone().wait_for_free_slot()),
             Box::pin(self.clone().create_free_slot()),
