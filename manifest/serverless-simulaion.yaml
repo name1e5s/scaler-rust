@@ -17,10 +17,11 @@ spec:
         #  需要替换为选手实现的scaler镜像地址
         #  registry.cn-beijing.aliyuncs.com/cloudnative-challenge/scaler:java-v1.0为java语言的demo镜像
         image: registry.cn-shanghai.aliyuncs.com/hai-hsin/scaler:arch
+        imagePullPolicy: Always
         command: ["./run.sh"]
       - name: serverless-simulator
-        image: registry.cn-beijing.aliyuncs.com/cloudnative-challenge/simulator:v3.1
+        image: registry.cn-beijing.aliyuncs.com/cloudnative-challenge/simulator:v3.2
         command: ["./run.sh" ]
         # 需要替换为选手希望测试的数据集名称，数据集的名称可以参考data/data_trainning.tar.gz解压后的目录结构
         # 不填写参数时，默认会测试所有的数据集
-        args: ["function_smoke_test"]
+        args: ["dataSet_2"]
