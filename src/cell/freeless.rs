@@ -129,7 +129,7 @@ impl FreelessCell {
             return Ok(slot);
         }
 
-        if let Some(slot) = timeout(Duration::from_secs(3), self.clone().wait_for_free_slot())
+        if let Some(slot) = timeout(Duration::from_secs(2), self.clone().wait_for_free_slot())
             .await
             .ok()
             .flatten()
@@ -230,12 +230,14 @@ pub struct FreelessCellFactory;
 
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
-        let cell = Arc::new(FreelessCell::new(meta, client, 1800));
-        for _ in 0..200 {
+        let key = meta.key.clone();
+        let cell = Arc::new(FreelessCell::new(meta, client, 1680));
+        for _ in 0..100 {
             cell.clone()
                 .create_slot_in_background(cell.clone().create_free_slot());
         }
         let weak_cell = Arc::downgrade(&cell);
+        let all_zero_max = if key.ends_with("1") { 7 } else { 4 };
         tokio::spawn(async move {
             let mut all_zero_count = 0;
             while let Some(cell) = weak_cell.upgrade() {
@@ -245,7 +247,7 @@ impl CellFactory<FreelessCell> for FreelessCellFactory {
                     all_zero_count = 0;
                 }
                 let key = cell.meta.key.clone();
-                let count = cell.destroy_outdated_slots(all_zero_count > 6);
+                let count = cell.destroy_outdated_slots(all_zero_count > all_zero_max);
                 if count != 0 {
                     log::info!("cell {}, destroyd {} outdated slots", key, count);
                 }
