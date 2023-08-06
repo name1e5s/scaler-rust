@@ -27,6 +27,15 @@ use tokio::{
 };
 
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 60;
+const FACTOR_MAX: u64 = 39;
+const FACTORS: &[(&str, u64)] = &[
+    ("roles1", 31),
+    ("rolebindings1", 39),
+    ("certificatesigningrequests1", 33),
+    ("roles2", 32),
+    ("rolebindings2", 39),
+    ("certificatesigningrequests2", 33),
+];
 
 struct SlotInfo {
     slot: Slot,
@@ -160,7 +169,7 @@ impl FreelessCell {
         }
 
         if !self.init_done.load(Ordering::Relaxed)
-            && self.try_allocate.fetch_add(1, Ordering::SeqCst) < self.pre_allocate
+            && self.try_allocate.fetch_add(1, Ordering::SeqCst) < self.pre_allocate * 6
         {
             if let Some(slot) = timeout(
                 Duration::from_secs(40),
@@ -276,9 +285,23 @@ pub struct FreelessCellFactory;
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
         let key = meta.key.clone();
-        let pre_allocate = if key.ends_with("1") { 100 } else { 90 };
-        let outdate_gc_sec = if key.ends_with("1") { 1680 } else { 1500 };
-        let cell = Arc::new(FreelessCell::new(meta, client, outdate_gc_sec, pre_allocate));
+        let factor = {
+            let mut result = FACTOR_MAX;
+            for (key, factor) in FACTORS {
+                if meta.key == *key {
+                    result = *factor;
+                }
+            }
+            result
+        };
+        let pre_allocate = 70 * factor / FACTOR_MAX;
+        let outdate_gc_sec = 1500;
+        let cell = Arc::new(FreelessCell::new(
+            meta,
+            client,
+            outdate_gc_sec,
+            pre_allocate,
+        ));
         let mut handles = Vec::new();
         for _ in 0..pre_allocate {
             let h = cell
