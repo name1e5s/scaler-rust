@@ -12,7 +12,14 @@ use futures::{
     Future,
 };
 use parking_lot::Mutex;
-use std::{collections::BinaryHeap, sync::Arc, time::Duration};
+use std::{
+    collections::BinaryHeap,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
 use tokio::{sync::Notify, time::timeout};
 
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 60;
@@ -50,6 +57,7 @@ pub struct FreelessCell {
     free_slots_notify: Notify,
     // request_id -> slot
     occupied_slots: DashMap<String, SlotInfo>,
+    assign_count: AtomicU64,
 }
 
 impl FreelessCell {
@@ -61,6 +69,7 @@ impl FreelessCell {
             free_slots: Mutex::new(BinaryHeap::new()),
             free_slots_notify: Notify::new(),
             occupied_slots: DashMap::new(),
+            assign_count: AtomicU64::new(0),
         }
     }
 
@@ -120,7 +129,7 @@ impl FreelessCell {
             return Ok(slot);
         }
 
-        if let Some(slot) = timeout(Duration::from_secs(3), self.clone().wait_for_free_slot())
+        if let Some(slot) = timeout(Duration::from_secs(2), self.clone().wait_for_free_slot())
             .await
             .ok()
             .flatten()
@@ -146,12 +155,12 @@ impl FreelessCell {
         }
     }
 
-    fn select_outdated_slots(&self) -> Vec<SlotInfo> {
+    fn select_outdated_slots(&self, all: bool) -> Vec<SlotInfo> {
         let current = util::current_timestamp();
         let mut to_free = Vec::new();
         let mut free_slots = self.free_slots.lock();
         while let Some(info) = free_slots.peek() {
-            if current - info.last_used < self.outdated_gc_sec {
+            if !all && current - info.last_used < self.outdated_gc_sec {
                 break;
             }
             to_free.push(free_slots.pop().expect("peeked"));
@@ -166,8 +175,8 @@ impl FreelessCell {
             .await
     }
 
-    async fn destroy_outdated_slots(self: Arc<Self>) -> usize {
-        let to_free = self.select_outdated_slots();
+    fn destroy_outdated_slots(self: Arc<Self>, all: bool) -> usize {
+        let to_free = self.select_outdated_slots(all);
         let result = to_free.len();
         tokio::spawn(async move {
             for slot in to_free {
@@ -188,6 +197,7 @@ impl Cell for FreelessCell {
         request_id: String,
         _timestamp: u64,
     ) -> Result<model::Assignment> {
+        self.assign_count.fetch_add(1, Ordering::SeqCst);
         let slot = self.clone().get_or_create_free_slot().await?;
         let instance_id = slot.slot.instance_id.clone();
         self.occupied_slots.insert(request_id.clone(), slot);
@@ -220,15 +230,24 @@ pub struct FreelessCellFactory;
 
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
-        let cell = Arc::new(FreelessCell::new(meta, client, 1800));
-        for _ in 0..200 {
-            cell.clone().create_slot_in_background(cell.clone().create_free_slot());
+        let key = meta.key.clone();
+        let cell = Arc::new(FreelessCell::new(meta, client, 1680));
+        for _ in 0..100 {
+            cell.clone()
+                .create_slot_in_background(cell.clone().create_free_slot());
         }
         let weak_cell = Arc::downgrade(&cell);
+        let all_zero_max = if key.ends_with("1") { 7 } else { 4 };
         tokio::spawn(async move {
+            let mut all_zero_count = 0;
             while let Some(cell) = weak_cell.upgrade() {
+                if cell.assign_count.swap(0, Ordering::SeqCst) == 0 {
+                    all_zero_count += 1;
+                } else {
+                    all_zero_count = 0;
+                }
                 let key = cell.meta.key.clone();
-                let count = cell.destroy_outdated_slots().await;
+                let count = cell.destroy_outdated_slots(all_zero_count > all_zero_max);
                 if count != 0 {
                     log::info!("cell {}, destroyd {} outdated slots", key, count);
                 }
