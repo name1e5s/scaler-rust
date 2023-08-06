@@ -1,21 +1,21 @@
 mod base;
+mod freeless;
 mod memory;
 mod metric;
 mod naive;
 mod naive_set_1;
 mod naive_set_2;
 mod stork;
-mod freeless;
 
 pub mod mixed;
 
 pub use base::BaseCell;
+pub use freeless::{FreelessCell, FreelessCellFactory};
 pub use memory::{MemoryCell, MemoryCellFactory};
 pub use metric::CellMetric;
 pub use naive::{NaiveCell, NaiveCellFactory};
 pub use naive_set_1::{NaiveSet1Cell, NaiveSet1CellFactory};
 pub use naive_set_2::{NaiveSet2Cell, NaiveSet2CellFactory};
-pub use freeless::{FreelessCell, FreelessCellFactory};
 
 use crate::{
     model,

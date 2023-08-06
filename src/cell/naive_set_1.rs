@@ -130,7 +130,8 @@ impl NaiveSet1Cell {
             return Ok(slot);
         }
 
-        self.clone().create_slot_in_background(self.clone().create_free_slot());
+        self.clone()
+            .create_slot_in_background(self.clone().create_free_slot());
         match select(
             Box::pin(self.clone().wait_for_free_slot()),
             Box::pin(self.clone().create_free_slot()),

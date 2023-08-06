@@ -15,12 +15,16 @@ use parking_lot::Mutex;
 use std::{
     collections::BinaryHeap,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
     time::Duration,
 };
-use tokio::{sync::Notify, time::timeout};
+use tokio::{
+    sync::Notify,
+    task::JoinHandle,
+    time::{sleep, timeout},
+};
 
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 60;
 
@@ -58,18 +62,29 @@ pub struct FreelessCell {
     // request_id -> slot
     occupied_slots: DashMap<String, SlotInfo>,
     assign_count: AtomicU64,
+    pre_allocate: u64,
+    try_allocate: AtomicU64,
+    init_done: AtomicBool,
 }
 
 impl FreelessCell {
-    fn new(meta: model::Meta, client: Arc<Platform>, outdated_gc_sec: u64) -> FreelessCell {
+    fn new(
+        meta: model::Meta,
+        client: Arc<Platform>,
+        outdated_gc_sec: u64,
+        pre_allocate: u64,
+    ) -> FreelessCell {
         FreelessCell {
             meta,
             client,
             outdated_gc_sec,
+            pre_allocate,
             free_slots: Mutex::new(BinaryHeap::new()),
             free_slots_notify: Notify::new(),
             occupied_slots: DashMap::new(),
             assign_count: AtomicU64::new(0),
+            try_allocate: AtomicU64::new(0),
+            init_done: AtomicBool::new(false),
         }
     }
 
@@ -108,7 +123,7 @@ impl FreelessCell {
         Ok(SlotInfo { slot, last_used: 0 })
     }
 
-    fn create_slot_in_background<Fut>(self: Arc<Self>, fut: Fut)
+    fn create_slot_in_background<Fut>(self: Arc<Self>, fut: Fut) -> JoinHandle<()>
     where
         Fut: Future<Output = Result<SlotInfo>> + Send + 'static,
     {
@@ -121,12 +136,42 @@ impl FreelessCell {
                     log::error!("create slot failed: {:?}", e);
                 }
             }
-        });
+        })
+    }
+
+    async fn loop_wait_for_free_slot(self: Arc<Self>) -> Option<SlotInfo> {
+        loop {
+            if self.init_done.load(Ordering::Relaxed) {
+                return None;
+            }
+            if let Some(slot) = self.try_get_free_slot() {
+                return Some(slot);
+            }
+            if let Some(slot) = self.clone().wait_for_free_slot().await {
+                return Some(slot);
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
     }
 
     async fn get_or_create_free_slot(self: Arc<Self>) -> Result<SlotInfo> {
         if let Some(slot) = self.try_get_free_slot() {
             return Ok(slot);
+        }
+
+        if !self.init_done.load(Ordering::Relaxed)
+            && self.try_allocate.fetch_add(1, Ordering::SeqCst) < self.pre_allocate
+        {
+            if let Some(slot) = timeout(
+                Duration::from_secs(40),
+                self.clone().loop_wait_for_free_slot(),
+            )
+            .await
+            .ok()
+            .flatten()
+            {
+                return Ok(slot);
+            }
         }
 
         if let Some(slot) = timeout(Duration::from_secs(2), self.clone().wait_for_free_slot())
@@ -231,11 +276,23 @@ pub struct FreelessCellFactory;
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
         let key = meta.key.clone();
-        let cell = Arc::new(FreelessCell::new(meta, client, 1680));
-        for _ in 0..100 {
-            cell.clone()
+        let pre_allocate = if key.ends_with("1") { 100 } else { 90 };
+        let outdate_gc_sec = if key.ends_with("1") { 1680 } else { 1500 };
+        let cell = Arc::new(FreelessCell::new(meta, client, outdate_gc_sec, pre_allocate));
+        let mut handles = Vec::new();
+        for _ in 0..pre_allocate {
+            let h = cell
+                .clone()
                 .create_slot_in_background(cell.clone().create_free_slot());
+            handles.push(h);
         }
+        let cloned_cell = cell.clone();
+        tokio::spawn(async move {
+            for h in handles {
+                let _ = h.await;
+            }
+            cloned_cell.init_done.store(true, Ordering::SeqCst);
+        });
         let weak_cell = Arc::downgrade(&cell);
         let all_zero_max = if key.ends_with("1") { 7 } else { 4 };
         tokio::spawn(async move {
