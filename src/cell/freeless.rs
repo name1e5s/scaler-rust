@@ -27,15 +27,28 @@ use tokio::{
 };
 
 const OUTDATED_SLOT_GC_INTERVAL_SEC: u64 = 60;
-const FACTOR_MAX: u64 = 39;
+const FACTOR_MAX: u64 = 3900;
 const FACTORS: &[(&str, u64)] = &[
-    ("roles1", 31),
-    ("rolebindings1", 39),
-    ("certificatesigningrequests1", 33),
-    ("roles2", 32),
-    ("rolebindings2", 39),
-    ("certificatesigningrequests2", 33),
+    ("roles1", 3100),
+    ("rolebindings1", 3900),
+    ("certificatesigningrequests1", 3300),
+    ("roles2", 3200),
+    ("rolebindings2", 3900),
+    ("certificatesigningrequests2", 3300),
 ];
+
+fn req_per_min_to_slots(meta_key: &str, req: u64) -> u64 {
+    let factor = {
+        let mut result = FACTOR_MAX;
+        for (key, factor) in FACTORS {
+            if meta_key == *key {
+                result = *factor;
+            }
+        }
+        result
+    };
+    (req * factor) / (60 * 1000)
+}
 
 struct SlotInfo {
     slot: Slot,
@@ -285,17 +298,9 @@ pub struct FreelessCellFactory;
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
         let key = meta.key.clone();
-        let factor = {
-            let mut result = FACTOR_MAX;
-            for (key, factor) in FACTORS {
-                if meta.key == *key {
-                    result = *factor;
-                }
-            }
-            result
-        };
-        let pre_allocate = 70 * factor / FACTOR_MAX;
-        let outdate_gc_sec = 1500;
+        let expected_max_req = if key.ends_with("1") { 750 } else { 650 };
+        let pre_allocate = req_per_min_to_slots(&meta.key, expected_max_req);
+        let outdate_gc_sec = if key.ends_with("1") { 1300 } else { 1600 };
         let cell = Arc::new(FreelessCell::new(
             meta,
             client,
