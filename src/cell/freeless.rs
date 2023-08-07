@@ -298,9 +298,9 @@ pub struct FreelessCellFactory;
 impl CellFactory<FreelessCell> for FreelessCellFactory {
     fn new(&self, meta: model::Meta, client: Arc<Platform>) -> Arc<FreelessCell> {
         let key = meta.key.clone();
-        let expected_max_req = if key.ends_with("1") { 750 } else { 650 };
+        let expected_max_req = if key.ends_with("1") { 750 } else { 1075 };
         let pre_allocate = req_per_min_to_slots(&meta.key, expected_max_req);
-        let outdate_gc_sec = if key.ends_with("1") { 1300 } else { 1600 };
+        let outdate_gc_sec = if key.ends_with("1") { 1300 } else { 1500 };
         let cell = Arc::new(FreelessCell::new(
             meta,
             client,
